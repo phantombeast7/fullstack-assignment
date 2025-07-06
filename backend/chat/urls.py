@@ -1,6 +1,14 @@
 from django.urls import path
 
 from chat import views
+from .views import (
+    ConversationSummaryListView,
+    FileUploadView,
+    FileListView,
+    FileDeleteView,
+    RAGQueryView,
+    FileProcessView,
+)
 
 urlpatterns = [
     path("", views.chat_root_view, name="chat_root_view"),
@@ -19,4 +27,15 @@ urlpatterns = [
     ),
     path("conversations/<uuid:pk>/delete/", views.conversation_soft_delete, name="conversation_delete"),
     path("versions/<uuid:pk>/add_message/", views.version_add_message, name="version_add_message"),
+]
+
+urlpatterns += [
+    # API endpoints for Task 3
+    path('api/conversations/summaries/', ConversationSummaryListView.as_view(), name='conversation-summaries'),
+    path('api/files/upload/', FileUploadView.as_view(), name='file-upload'),
+    path('api/files/', FileListView.as_view(), name='file-list'),
+    path('api/files/<int:id>/delete/', FileDeleteView.as_view(), name='file-delete'),
+    # Task 4 endpoints
+    path('api/rag/query/', RAGQueryView.as_view(), name='rag-query'),
+    path('api/files/<int:id>/process/', FileProcessView.as_view(), name='file-process'),
 ]

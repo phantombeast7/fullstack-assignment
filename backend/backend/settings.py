@@ -44,12 +44,14 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "nested_admin",
+    "django_crontab",
     "authentication",
     "chat",
     "gpt",
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -57,7 +59,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ROOT_URLCONF = "backend.urls"
@@ -84,12 +85,21 @@ WSGI_APPLICATION = "backend.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# Use PostgreSQL in production, SQLite in development
+if os.environ.get('DATABASE_URL'):
+    # Production: PostgreSQL
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(os.environ['DATABASE_URL'])
     }
-}
+else:
+    # Development: SQLite
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -113,6 +123,7 @@ AUTH_PASSWORD_VALIDATORS = [
 AUTH_USER_MODEL = "authentication.CustomUser"
 
 AUTHENTICATION_BACKENDS = [
+    "authentication.backends.EmailBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
 
@@ -132,6 +143,9 @@ USE_I18N = True
 STATIC_ROOT = BASE_DIR / "static"
 STATIC_URL = "/static/"
 
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
@@ -139,13 +153,31 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = [
     FRONTEND_URL,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     FRONTEND_URL,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
-CSRF_COOKIE_SAMESITE = "None"
+SESSION_COOKIE_SECURE = False
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = False
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# Crontab configuration for scheduled tasks
+CRONJOBS = [
+    # Run cleanup every day at 2:00 AM
+    ('0 2 * * *', 'django.core.management.call_command', ['cleanup_old_conversations', '--days=30', '--deleted-only', '--force']),
+    # Run cleanup for very old conversations every Sunday at 3:00 AM
+    ('0 3 * * 0', 'django.core.management.call_command', ['cleanup_old_conversations', '--days=90', '--force']),
+]
+
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 10,
+}

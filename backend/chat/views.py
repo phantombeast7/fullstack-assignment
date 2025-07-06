@@ -3,6 +3,17 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework import generics, permissions, filters, status, serializers
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from .serializers import ConversationSummarySerializer, FileUploadSerializer
+from .models import Conversation, FileUpload, FileEventLog
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import BasePermission
+from rest_framework.views import APIView
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 
 from chat.models import Conversation, Message, Version
 from chat.serializers import ConversationSerializer, MessageSerializer, TitleSerializer, VersionSerializer
@@ -230,3 +241,135 @@ def version_add_message(request, pk):
             status=status.HTTP_201_CREATED,
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+@method_decorator(cache_page(60), name='dispatch')
+class ConversationSummaryListView(generics.ListAPIView):
+    """
+    API endpoint to retrieve conversation summaries with pagination and filtering.
+    Supports filtering by user, title, and modified_at.
+    """
+    serializer_class = ConversationSummarySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['user', 'title']
+    search_fields = ['title', 'summary']
+    ordering_fields = ['modified_at', 'title']
+    ordering = ['-modified_at']
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        qs = Conversation.objects.all()
+        user = self.request.query_params.get('user')
+        if user:
+            qs = qs.filter(user__id=user)
+        return qs
+
+class FileUploadPermission(BasePermission):
+    """Allow only certain roles to upload/manage files."""
+    allowed_roles = ["admin", "user", "moderator", "superadmin"]
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and getattr(request.user, 'role', None) in self.allowed_roles
+
+class FileUploadView(generics.CreateAPIView):
+    """
+    API endpoint for file upload with duplication check.
+    """
+    serializer_class = FileUploadSerializer
+    permission_classes = [FileUploadPermission]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def perform_create(self, serializer):
+        uploaded_file = self.request.FILES['file']
+        file_hash = self._calculate_hash(uploaded_file)
+        # Check for duplicate
+        if FileUpload.objects.filter(hash=file_hash, uploader=self.request.user).exists():
+            raise serializers.ValidationError('Duplicate file upload detected.')
+        instance = serializer.save(
+            uploader=self.request.user,
+            name=uploaded_file.name,
+            size=uploaded_file.size,
+            hash=file_hash
+        )
+        # Log upload event
+        FileEventLog.objects.create(event_type="upload", file=instance, user=self.request.user)
+
+    def _calculate_hash(self, file):
+        import hashlib
+        hasher = hashlib.sha256()
+        for chunk in file.chunks():
+            hasher.update(chunk)
+        file.seek(0)
+        return hasher.hexdigest()
+
+class FileListView(generics.ListAPIView):
+    """
+    API endpoint to list uploaded files with metadata.
+    """
+    serializer_class = FileUploadSerializer
+    permission_classes = [FileUploadPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['uploader', 'name', 'hash']
+    search_fields = ['name']
+    ordering_fields = ['uploaded_at', 'name', 'size']
+    ordering = ['-uploaded_at']
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        return FileUpload.objects.filter(uploader=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        # Log access for each file in the result
+        for file in self.get_queryset():
+            FileEventLog.objects.create(event_type="access", file=file, user=request.user)
+        return response
+
+class FileDeleteView(generics.DestroyAPIView):
+    """
+    API endpoint to delete an uploaded file.
+    """
+    serializer_class = FileUploadSerializer
+    permission_classes = [FileUploadPermission]
+    lookup_field = 'id'
+
+    def get_queryset(self):
+        return FileUpload.objects.filter(uploader=self.request.user)
+
+    def perform_destroy(self, instance):
+        FileEventLog.objects.create(event_type="delete", file=instance, user=self.request.user)
+        super().perform_destroy(instance)
+
+class RAGQueryView(APIView):
+    """
+    API endpoint for Retrieval-Augmented Generation (RAG) queries.
+    POST: {"query": "..."}
+    Returns: {"answer": "..."}
+    """
+    permission_classes = [FileUploadPermission]
+    def post(self, request):
+        query = request.data.get('query')
+        # Stub: Replace with actual RAG logic
+        answer = f"[RAG answer for query: {query}]"
+        return Response({"answer": answer})
+
+class FileProcessView(APIView):
+    """
+    API endpoint to process an uploaded file (e.g., extract text, preview, etc.).
+    POST: {}
+    Returns: {"result": "..."}
+    """
+    permission_classes = [FileUploadPermission]
+    def post(self, request, id):
+        try:
+            file = FileUpload.objects.get(id=id, uploader=request.user)
+        except FileUpload.DoesNotExist:
+            return Response({"error": "File not found"}, status=404)
+        # Stub: Replace with actual file processing logic
+        result = f"[Processed file: {file.name}]"
+        return Response({"result": result})
