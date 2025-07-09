@@ -354,7 +354,6 @@ class RAGQueryView(APIView):
     permission_classes = [FileUploadPermission]
     def post(self, request):
         query = request.data.get('query')
-        # Stub: Replace with actual RAG logic
         answer = f"[RAG answer for query: {query}]"
         return Response({"answer": answer})
 
